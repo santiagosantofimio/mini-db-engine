@@ -1,5 +1,6 @@
 package dev.santiagosantofimio.minidb.cli;
 
+import dev.santiagosantofimio.minidb.plan.ValueType;
 import dev.santiagosantofimio.minidb.record.Tuple;
 import dev.santiagosantofimio.minidb.record.Value;
 import dev.santiagosantofimio.minidb.record.Value.BooleanValue;
@@ -28,13 +29,13 @@ final class TableRenderer {
         this.box = unicode ? UNICODE : ASCII;
     }
 
-    List<String> render(List<String> columns, List<Tuple> rows) {
+    List<String> render(List<String> columns, List<ValueType> types, List<Tuple> rows) {
         int count = columns.size();
         int[] widths = new int[count];
         boolean[] numeric = new boolean[count];
         for (int column = 0; column < count; column++) {
             widths[column] = width(columns.get(column));
-            numeric[column] = isNumericColumn(rows, column);
+            numeric[column] = types.get(column).isNumeric();
             for (Tuple row : rows) {
                 widths[column] = Math.max(widths[column], width(text(row.get(column))));
             }
@@ -88,19 +89,6 @@ final class TableRenderer {
             }
         });
         return out.toString();
-    }
-
-    private static boolean isNumericColumn(List<Tuple> rows, int column) {
-        boolean sawNumber = false;
-        for (Tuple row : rows) {
-            Value value = row.get(column);
-            if (value instanceof IntValue || value instanceof DoubleValue) {
-                sawNumber = true;
-            } else if (!value.isNull()) {
-                return false;
-            }
-        }
-        return sawNumber;
     }
 
     private String rule(String corners, int[] widths) {

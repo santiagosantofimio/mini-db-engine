@@ -98,7 +98,9 @@ public final class Executor {
         } finally {
             operator.close();
         }
-        return new Rows(plan.attributes().stream().map(Attribute::name).toList(), rows);
+        List<Attribute> attributes = plan.attributes();
+        return new Rows(attributes.stream().map(Attribute::name).toList(),
+                attributes.stream().map(Attribute::type).toList(), rows);
     }
 
     private StatementResult insert(Insert insert) {
