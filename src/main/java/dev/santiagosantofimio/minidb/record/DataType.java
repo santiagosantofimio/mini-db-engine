@@ -52,9 +52,12 @@ public sealed interface DataType {
 
     record VarcharType(int maxLength) implements DataType {
 
+        public static final int MAX_LENGTH = 4000;
+
         public VarcharType {
-            if (maxLength < 1) {
-                throw new IllegalArgumentException("VARCHAR length must be at least 1, got " + maxLength);
+            if (maxLength < 1 || maxLength > MAX_LENGTH) {
+                throw new IllegalArgumentException(
+                        "VARCHAR length must be between 1 and " + MAX_LENGTH + ", got " + maxLength);
             }
         }
 
