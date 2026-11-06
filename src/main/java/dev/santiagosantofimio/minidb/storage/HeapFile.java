@@ -18,8 +18,12 @@ public final class HeapFile {
     }
 
     public static HeapFile create(Storage storage) {
-        try (PageHandle page = storage.allocate(PageType.HEAP)) {
-            SlottedPage.initialize(page);
+        return create(storage, PageType.HEAP);
+    }
+
+    public static HeapFile create(Storage storage, PageType pageType) {
+        try (PageHandle page = storage.allocate(pageType)) {
+            SlottedPage.initialize(page, pageType);
             return new HeapFile(storage, page.pageId());
         }
     }
@@ -54,10 +58,23 @@ public final class HeapFile {
     }
 
     private Rid insertIntoNewPage(SlottedPage last, byte[] record) {
-        try (PageHandle page = storage.allocate(PageType.HEAP)) {
-            int slot = SlottedPage.initialize(page).insert(record).orElseThrow();
+        PageType pageType = last.type();
+        try (PageHandle page = storage.allocate(pageType)) {
+            int slot = SlottedPage.initialize(page, pageType).insert(record).orElseThrow();
             last.setNextPageId(page.pageId());
             return new Rid(page.pageId(), slot);
+        }
+    }
+
+    public void drop() {
+        int pageId = firstPageId;
+        while (pageId != Storage.NO_PAGE) {
+            int nextPageId;
+            try (PageHandle page = storage.fetch(pageId)) {
+                nextPageId = new SlottedPage(page).nextPageId();
+            }
+            storage.free(pageId);
+            pageId = nextPageId;
         }
     }
 

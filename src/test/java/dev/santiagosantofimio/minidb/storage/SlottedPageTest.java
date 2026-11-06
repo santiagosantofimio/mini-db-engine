@@ -28,7 +28,7 @@ class SlottedPageTest {
     void createEmptyHeapPage() {
         storage = Storage.open(directory.resolve("slotted.db"), 4);
         handle = storage.allocate(PageType.HEAP);
-        page = SlottedPage.initialize(handle);
+        page = SlottedPage.initialize(handle, PageType.HEAP);
     }
 
     @AfterEach

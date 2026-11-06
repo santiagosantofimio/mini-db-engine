@@ -18,22 +18,33 @@ public final class SlottedPage {
 
     public SlottedPage(PageHandle page) {
         PageType type = PageType.readFrom(page);
-        if (type != PageType.HEAP) {
-            throw new StorageException("page " + page.pageId() + " is a " + type + " page, not a heap page");
+        if (!isSlotted(type)) {
+            throw new StorageException("page " + page.pageId() + " is a " + type + " page, not a slotted page");
         }
         this.page = page;
     }
 
-    public static SlottedPage initialize(PageHandle page) {
-        PageType.HEAP.writeTo(page);
+    public static SlottedPage initialize(PageHandle page, PageType type) {
+        if (!isSlotted(type)) {
+            throw new IllegalArgumentException(type + " pages do not use the slotted layout");
+        }
+        type.writeTo(page);
         page.putUnsignedShort(SLOT_COUNT_OFFSET, 0);
         page.putUnsignedShort(FREE_SPACE_END_OFFSET, Pager.PAGE_SIZE);
         page.putInt(NEXT_PAGE_OFFSET, Storage.NO_PAGE);
         return new SlottedPage(page);
     }
 
+    private static boolean isSlotted(PageType type) {
+        return type == PageType.HEAP || type == PageType.CATALOG;
+    }
+
     public int pageId() {
         return page.pageId();
+    }
+
+    public PageType type() {
+        return PageType.readFrom(page);
     }
 
     public int slotCount() {

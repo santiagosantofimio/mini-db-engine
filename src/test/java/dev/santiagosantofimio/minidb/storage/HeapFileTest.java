@@ -203,4 +203,45 @@ class HeapFileTest {
             assertEquals(0, storage.pinnedPageCount());
         }
     }
+
+    @Test
+    void catalogHeapsGrowWithCatalogPages() {
+        try (Storage storage = open(8)) {
+            HeapFile catalog = HeapFile.create(storage, PageType.CATALOG);
+            Rid last = null;
+            for (int id = 0; id < 100; id++) {
+                last = catalog.insert(record(id, 200));
+            }
+
+            try (PageHandle page = storage.fetch(last.pageId())) {
+                assertEquals(PageType.CATALOG, PageType.readFrom(page));
+            }
+            assertEquals(100, scanAll(catalog).size());
+        }
+    }
+
+    @Test
+    void droppingAHeapFreesEveryPageForReuse() {
+        try (Storage storage = open(8)) {
+            HeapFile heap = HeapFile.create(storage);
+            List<Integer> pages = new ArrayList<>();
+            for (int id = 0; id < 100; id++) {
+                int pageId = heap.insert(record(id, 200)).pageId();
+                if (!pages.contains(pageId)) {
+                    pages.add(pageId);
+                }
+            }
+            int pageCount = storage.pageCount();
+
+            heap.drop();
+
+            HeapFile replacement = HeapFile.create(storage);
+            for (int id = 0; id < 100; id++) {
+                replacement.insert(record(id, 200));
+            }
+            assertEquals(pageCount, storage.pageCount());
+            assertTrue(pages.contains(replacement.firstPageId()));
+            assertEquals(0, storage.pinnedPageCount());
+        }
+    }
 }
