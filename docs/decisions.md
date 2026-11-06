@@ -67,3 +67,39 @@ Rejected: storing values as `Object` with Java `null` for SQL `NULL`. It is shor
 ### One process per database file
 
 The pager takes an exclusive `FileLock` when it opens a file, so a second process, or a second open in the same JVM, fails right away instead of corrupting pages that both believe they own.
+
+## Phase 2: first queries
+
+### The catalog is a heap of records, cached in memory
+
+Each table is one binary record in a heap of `CATALOG` pages reachable from the header. On open the whole catalog is read into a sorted map; `CREATE TABLE` and `DROP TABLE` update the map and the record together. The catalog reuses the slotted page and heap file code, so it gets free space reuse and page chaining for free.
+
+Rejected: storing the original `CREATE TABLE` text and parsing it again on open, as SQLite does. It is compact and self-documenting, but it makes opening a database depend on the SQL parser.
+
+### A hand-written recursive descent parser with positions on every node
+
+Each precedence level of the expression grammar is one method, from `OR` down to primary expressions, which keeps the grammar readable in the code itself. Every token records its line and column, and every AST node keeps the position of the token that best explains an error about it: the operator of a binary expression, the name of an unknown column. Select-list aliases require `AS`, because accepting a bare word turns a typo such as `SELECT name FORM t` into an alias and moves the error somewhere confusing.
+
+Rejected: a parser generator. It would be a dependency, and the project's point is to show the parser.
+
+### Binding is a separate step between parsing and execution
+
+The parser produces names; the binder turns them into column indexes and checks types against the input attributes before any row is read. A type error such as `name > 3` is reported with a caret under the operator, and evaluation never has to look up names or check types per row. The SQL AST and the bound expressions are different sealed types, so a bound plan cannot contain an unresolved name.
+
+Rejected: resolving names lazily during evaluation. It is less code, but errors would appear only when a row reaches the bad expression, or never on an empty table.
+
+### Errors carry an optional source position
+
+Any `MiniDbException` may point at a line and column; `SyntaxException` always does. Unknown tables and columns (`CatalogException`), type errors (`QueryException`) and bad `INSERT` values (`ConstraintViolationException`) all get the caret. `QueryException` was added for type errors and evaluation failures such as division by zero, which none of the original four types described.
+
+### `INSERT` validates every row before writing any
+
+Types, `NOT NULL`, `VARCHAR` lengths and row size are checked for all rows first, so a constraint error in the tenth row leaves the table untouched. Real atomicity, including against crashes, arrives with the write-ahead log in phase 5.
+
+### Pages are written after every statement until the WAL exists
+
+After each statement the dirty pages are written to the file, followed by an `fsync` only when something was written. This keeps the window for losing work small without a log. Phase 5 replaces it with no-steal and commit records.
+
+### The REPL has no line editor
+
+Line editing and history would need a library such as JLine, which breaks the zero-dependency rule. The README suggests `rlwrap` instead. Colors appear only on a terminal and respect `NO_COLOR`, borders fall back to ASCII when the output is not UTF-8, errors go to standard error, and a non-interactive run exits with status 1 if any statement failed.

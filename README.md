@@ -12,7 +12,7 @@ Built in phases, each one merged with its tests green.
 
 - [x] **0. Project setup:** Maven build, CI, package layout, error hierarchy
 - [x] **1. Storage:** pager, LRU buffer pool, slotted pages, heap files, tuple serialization
-- [ ] **2. First queries:** catalog, lexer, parser, `CREATE TABLE`, `INSERT`, `SELECT ... WHERE`, REPL
+- [x] **2. First queries:** catalog, lexer, parser, `CREATE TABLE`, `DROP TABLE`, `INSERT`, `SELECT ... WHERE`, REPL
 - [ ] **3. B+ tree:** splits, point and range lookups, `PRIMARY KEY`, `CREATE INDEX`
 - [ ] **4. Planner and executor:** rule-based optimizer, joins, `ORDER BY`, `LIMIT`, `UPDATE`, `DELETE`, `EXPLAIN`
 - [ ] **5. Transactions and recovery:** WAL, `BEGIN` / `COMMIT` / `ROLLBACK`, checkpoints
@@ -25,8 +25,61 @@ You need JDK 21 or newer. Maven is optional: the bundled wrapper downloads the r
 
 ```bash
 ./mvnw package
-java -jar target/minidb.jar --version
+java -jar target/minidb.jar demo.db
 ```
+
+The file is created if it does not exist. Load the example university data and query it:
+
+```text
+minidb> .read examples/university.sql
+minidb> SELECT name, age, major FROM students
+   ...> WHERE major = 'Computer Science' AND age >= 21;
+┌───────────────┬─────┬──────────────────┐
+│ name          │ age │ major            │
+├───────────────┼─────┼──────────────────┤
+│ Ana Torres    │  21 │ Computer Science │
+│ Camila Rojas  │  23 │ Computer Science │
+│ Julián Ortega │  25 │ Computer Science │
+└───────────────┴─────┴──────────────────┘
+3 rows in 0.41 ms
+minidb> SELECT nme FROM students;
+Error at line 1, column 8: unknown column nme
+  SELECT nme FROM students;
+         ^
+```
+
+Statements end with `;` and may span several lines. `--buffer-pages N` sets the buffer pool size (1024 pages by default, at least 16). The REPL has no line editing of its own, since that would need a dependency; run it under `rlwrap` for history and arrow keys.
+
+| Command | What it does |
+|---|---|
+| `.help` | List the commands |
+| `.tables` | List the tables |
+| `.schema [table]` | Show `CREATE TABLE` statements |
+| `.stats` | Show buffer pool hits, misses and evictions |
+| `.read <file>` | Run the SQL in a file, stopping at the first error |
+| `.exit` | Leave the REPL |
+
+When standard input is not a terminal, the REPL prints no prompts or colors and exits with status 1 if any statement failed, so it also works in scripts:
+
+```bash
+java -jar target/minidb.jar demo.db < examples/university.sql
+```
+
+## Supported SQL
+
+```sql
+CREATE TABLE students (id INT NOT NULL, name VARCHAR(40) NOT NULL, gpa DOUBLE, active BOOLEAN);
+INSERT INTO students (id, name) VALUES (1, 'Ana'), (2, 'Bruno');
+SELECT s.name, s.gpa * 10 AS score FROM students s WHERE s.gpa BETWEEN 3.0 AND 4.0;
+DROP TABLE students;
+```
+
+- **Types:** `INT` (32-bit), `DOUBLE`, `BOOLEAN` and `VARCHAR(n)` with `n` up to 4000 characters.
+- **Constraints:** `NOT NULL` and the `VARCHAR` length. An `INSERT` checks every row before writing any of them.
+- **Expressions:** literals, columns (`t.column`), `+ - * /`, `= <> != < <= > >=`, `BETWEEN`, `IS [NOT] NULL`, `AND`, `OR`, `NOT` and parentheses. `INT / INT` truncates; overflow and division by zero are errors.
+- **`NULL`** follows SQL's three-valued logic: comparing with `NULL` gives `NULL`, and `WHERE` keeps only rows whose condition is `TRUE`.
+- **Names** are case-insensitive. Keywords cannot be used as names, and select-list aliases need `AS`.
+- `--` starts a comment that runs to the end of the line.
 
 ## Architecture
 
@@ -97,6 +150,10 @@ A tuple is a null bitmap (bit `i % 8` of byte `i / 8` is set when column `i` is 
 | `VARCHAR(n)` | 2-byte length in bytes, then UTF-8 |
 
 For example, `(7, 'Ana', NULL, TRUE)` with columns `INT, VARCHAR, DOUBLE, BOOLEAN` encodes as `04 00000007 0003 416E61 01`. A tuple must fit in one page, which leaves room for 4083 bytes.
+
+### Catalog
+
+The header's catalog root points to a chain of `CATALOG` slotted pages holding one record per table: a kind byte (`1` for a table), the table name, the table's first heap page, a column count, and for each column its name, a type code (`1` `INT`, `2` `DOUBLE`, `3` `BOOLEAN`, `4` `VARCHAR` followed by its 2-byte length) and a nullable flag. Strings are a 2-byte length followed by UTF-8. The catalog is read into memory when the database opens and written through on every `CREATE TABLE` and `DROP TABLE`.
 
 ## Scope
 
