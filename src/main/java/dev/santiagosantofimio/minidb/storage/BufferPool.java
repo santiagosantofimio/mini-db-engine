@@ -4,6 +4,7 @@ import dev.santiagosantofimio.minidb.StorageException;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -60,11 +61,13 @@ public final class BufferPool {
         }
     }
 
-    public void flushAll() {
-        frames.values().stream()
+    public int flushAll() {
+        List<Frame> dirty = frames.values().stream()
                 .filter(frame -> frame.dirty)
                 .sorted(Comparator.comparingInt(frame -> frame.pageId))
-                .forEach(this::writeBack);
+                .toList();
+        dirty.forEach(this::writeBack);
+        return dirty.size();
     }
 
     public BufferPoolStats stats() {

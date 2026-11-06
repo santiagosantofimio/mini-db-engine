@@ -137,8 +137,9 @@ public final class Storage implements AutoCloseable {
     }
 
     public void flush() {
-        pool.flushAll();
-        pager.force();
+        if (pool.flushAll() > 0) {
+            pager.force();
+        }
     }
 
     @Override
