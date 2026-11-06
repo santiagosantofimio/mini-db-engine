@@ -145,10 +145,11 @@ class BufferPoolTest {
             page.putInt(0, 200);
         }
 
-        pool.flushAll();
+        assertEquals(1, pool.flushAll());
 
         assertEquals(200, valueOnDisk(2));
         assertEquals(1, pool.cachedPageCount());
+        assertEquals(0, pool.flushAll());
     }
 
     @Test
