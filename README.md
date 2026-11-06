@@ -80,3 +80,7 @@ Run a single test class:
 ```bash
 ./mvnw test -Dtest=MainTest
 ```
+
+## License
+
+[MIT](LICENSE)
