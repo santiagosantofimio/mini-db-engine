@@ -32,7 +32,7 @@ final class Renderer {
     List<String> result(StatementResult result, long nanos) {
         return switch (result) {
             case Rows rows -> {
-                List<String> lines = new ArrayList<>(tables.render(rows.columns(), rows.rows()));
+                List<String> lines = new ArrayList<>(tables.render(rows.columns(), rows.types(), rows.rows()));
                 lines.add(style.dim(count(rows.rows().size(), "row") + " in " + duration(nanos)));
                 yield lines;
             }

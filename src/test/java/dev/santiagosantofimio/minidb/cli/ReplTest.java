@@ -103,6 +103,14 @@ class ReplTest {
     }
 
     @Test
+    void numericColumnsAlignRightEvenWhenEveryValueIsNull() {
+        run(STUDENTS + "SELECT gpa, name FROM students WHERE gpa IS NULL;\n");
+
+        assertTrue(output().contains("│ NULL │ Bruno │"));
+        assertTrue(output().contains("│  gpa │ name  │"));
+    }
+
+    @Test
     void statementsCanSpanSeveralLines() {
         run(STUDENTS + "SELECT name\nFROM students\nWHERE id = 10;\n");
 
