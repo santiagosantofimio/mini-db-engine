@@ -78,6 +78,13 @@ class LexerTest {
     }
 
     @Test
+    void endOfInputSitsRightAfterTheLastToken() {
+        List<Token> tokens = Lexer.tokenize("SELECT *\n  -- trailing comment\n\n");
+
+        assertEquals(new SourcePosition(1, 9), tokens.get(2).position());
+    }
+
+    @Test
     void skipsLineComments() {
         assertEquals(
                 List.of(TokenType.SELECT, TokenType.STAR, TokenType.END),

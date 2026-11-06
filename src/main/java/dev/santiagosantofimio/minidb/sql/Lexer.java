@@ -15,6 +15,7 @@ public final class Lexer {
     private int line = 1;
     private int column = 1;
     private boolean insideUnterminatedString;
+    private SourcePosition endOfLastToken = new SourcePosition(1, 1);
 
     private Lexer(String source) {
         this.source = source;
@@ -46,10 +47,15 @@ public final class Lexer {
 
     private Token nextToken() {
         skipWhitespaceAndComments();
-        SourcePosition start = position();
         if (atEnd()) {
-            return new Token(TokenType.END, "", start);
+            return new Token(TokenType.END, "", endOfLastToken);
         }
+        Token token = scanToken(position());
+        endOfLastToken = position();
+        return token;
+    }
+
+    private Token scanToken(SourcePosition start) {
         char c = peek();
         if (Character.isLetter(c) || c == '_') {
             return word(start);
