@@ -35,8 +35,10 @@ class RecordModelTest {
     }
 
     @Test
-    void varcharNeedsAPositiveLength() {
+    void varcharLengthIsBounded() {
         assertThrows(IllegalArgumentException.class, () -> DataType.varchar(0));
+        assertThrows(IllegalArgumentException.class, () -> DataType.varchar(DataType.VarcharType.MAX_LENGTH + 1));
+        assertEquals(DataType.VarcharType.MAX_LENGTH, ((DataType.VarcharType) DataType.varchar(4000)).maxLength());
     }
 
     @Test
