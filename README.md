@@ -11,7 +11,7 @@ It keeps everything in a single paged file, indexes with an on-disk B+ tree, und
 Built in phases, each one merged with its tests green.
 
 - [x] **0. Project setup:** Maven build, CI, package layout, error hierarchy
-- [ ] **1. Storage:** pager, LRU buffer pool, slotted pages, tuple serialization
+- [x] **1. Storage:** pager, LRU buffer pool, slotted pages, heap files, tuple serialization
 - [ ] **2. First queries:** catalog, lexer, parser, `CREATE TABLE`, `INSERT`, `SELECT ... WHERE`, REPL
 - [ ] **3. B+ tree:** splits, point and range lookups, `PRIMARY KEY`, `CREATE INDEX`
 - [ ] **4. Planner and executor:** rule-based optimizer, joins, `ORDER BY`, `LIMIT`, `UPDATE`, `DELETE`, `EXPLAIN`
@@ -54,6 +54,49 @@ flowchart LR
 | `exec` | Physical operators (`open` / `next` / `close`) |
 | `tx` | Write-ahead log, transactions and recovery |
 | `cli` | REPL, meta-commands and table rendering |
+
+## Storage format
+
+A database is one file of 4096-byte pages, big-endian throughout. Page 0 is the header. Every other page starts with a one-byte type: `HEAP` (1), `BTREE_INTERNAL` (2), `BTREE_LEAF` (3), `CATALOG` (4) or `FREE` (5).
+
+### Header
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 8 | Magic bytes `MINIDB01` |
+| 8 | 4 | Format version (`1`) |
+| 12 | 4 | Page size (`4096`) |
+| 16 | 4 | Page count |
+| 20 | 4 | Head of the free page list |
+| 24 | 4 | Catalog root page |
+
+Page 0 can never hold data, so page id `0` means "no page" in every pointer. Freed pages form a linked list, each one storing the next free page right after its type byte, and they are reused before the file grows.
+
+### Heap pages
+
+Tables are chains of slotted pages:
+
+```text
+0      1            3                5           9
+┌──────┬────────────┬────────────────┬───────────┬──────────────────┬──────────┬─────────────┐
+│ type │ slot count │ free space end │ next page │ slot directory → │   free   │ ← records   │
+└──────┴────────────┴────────────────┴───────────┴──────────────────┴──────────┴─────────────┘
+```
+
+Each slot holds a 2-byte record offset and a 2-byte length, and offset `0` marks an empty slot. A record id (RID) is `(page id, slot)`. Deleting a row empties its slot. When an insert needs space that deletes left scattered, the page compacts its records but keeps every slot number, so RIDs never change.
+
+### Tuples
+
+A tuple is a null bitmap (bit `i % 8` of byte `i / 8` is set when column `i` is `NULL`) followed by the non-null fields in column order:
+
+| Type | Encoding |
+|---|---|
+| `INT` | 4 bytes, two's complement |
+| `DOUBLE` | 8 bytes, IEEE 754 |
+| `BOOLEAN` | 1 byte, `0` or `1` |
+| `VARCHAR(n)` | 2-byte length in bytes, then UTF-8 |
+
+For example, `(7, 'Ana', NULL, TRUE)` with columns `INT, VARCHAR, DOUBLE, BOOLEAN` encodes as `04 00000007 0003 416E61 01`. A tuple must fit in one page, which leaves room for 4083 bytes.
 
 ## Scope
 
