@@ -34,7 +34,7 @@ class ReplTest {
 
     @BeforeEach
     void openDatabase() {
-        database = Database.open(directory.resolve("repl.db"), Database.MIN_BUFFER_PAGES);
+        database = Database.open(directory.resolve("repl.db"), Database.MIN_BUFFER_PAGES, 3);
     }
 
     @AfterEach
@@ -243,5 +243,61 @@ class ReplTest {
                 + "INSERT INTO notes VALUES ('two\nlines');\nSELECT body FROM notes;\n");
 
         assertTrue(output().contains("│ two\\nlines │"));
+    }
+
+    @Test
+    void btreePrintsEachLevelAndTheLeafChain() {
+        run("CREATE TABLE ids (id INT PRIMARY KEY);\n"
+                + "INSERT INTO ids VALUES (1), (2), (3), (4), (5), (6), (7);\n"
+                + ".btree ids_pkey\n");
+
+        assertEquals(List.of(
+                "ids_pkey on ids (id)",
+                "2 levels · 4 pages · 7 keys · order 3",
+                "  1  [3 5]",
+                "  2  (1 2) → (3 4) → (5 6 7)"), output().subList(2, 6));
+    }
+
+    @Test
+    void btreeShortensWideNodes() {
+        database.close();
+        database = Database.open(directory.resolve("wide.db"), Database.MIN_BUFFER_PAGES);
+        StringBuilder insert = new StringBuilder("CREATE TABLE ids (id INT PRIMARY KEY);\nINSERT INTO ids VALUES ");
+        for (int i = 1; i <= 20; i++) {
+            insert.append(i == 1 ? "" : ", ").append("(").append(i).append(")");
+        }
+
+        run(insert + ";\n.btree IDS_PKEY\n", new Terminal(false, false, false));
+
+        assertEquals("  1  (1 2 3 ... 18 19 20)", output().get(4));
+        assertEquals("1 level, 1 page, 20 keys, order 408", output().get(3));
+    }
+
+    @Test
+    void indexesAndSchemaShowKeysAndIndexes() {
+        run("CREATE TABLE students (id INT PRIMARY KEY, age INT, name VARCHAR(10) NOT NULL);\n"
+                + "CREATE INDEX students_age ON students (age);\n"
+                + ".indexes\n.schema students\n");
+
+        assertEquals(List.of(
+                "students_age   students (age)",
+                "students_pkey  students (id)   primary key",
+                "CREATE TABLE students (",
+                "  id INT PRIMARY KEY,",
+                "  age INT,",
+                "  name VARCHAR(10) NOT NULL",
+                ");",
+                "CREATE INDEX students_age ON students (age);"), output().subList(2, 10));
+    }
+
+    @Test
+    void reportsUnknownIndexesAndEmptyLists() {
+        run(".indexes\n.btree\n.btree ghost\n.indexes ghosts\n");
+
+        assertEquals(List.of("No indexes yet"), output());
+        assertEquals(List.of(
+                "Error: .btree needs an index name; .indexes lists them",
+                "Error: no such index: ghost",
+                "Error: no such table: ghosts"), errors());
     }
 }

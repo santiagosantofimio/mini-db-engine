@@ -63,14 +63,17 @@ class MainTest {
         assertEquals(Main.EXIT_USAGE, run("", database(), "--buffer-pages", "lots"));
         assertEquals(Main.EXIT_USAGE, run("", database(), "--buffer-pages", "3"));
         assertEquals(Main.EXIT_USAGE, run("", database(), "other.db"));
+        assertEquals(Main.EXIT_USAGE, run("", database(), "--btree-order", "2"));
+        assertEquals(Main.EXIT_USAGE, run("", database(), "--btree-order", "409"));
         assertTrue(text(err).contains("--buffer-pages must be at least 16"));
+        assertTrue(text(err).contains("--btree-order must be at most 408"));
     }
 
     @Test
     void runsSqlFromStandardInputAndCreatesTheFile() {
         int status = run(
                 "CREATE TABLE t (x INT);\nINSERT INTO t VALUES (1), (2);\nSELECT * FROM t;\n",
-                database(), "--buffer-pages", "32");
+                database(), "--buffer-pages", "32", "--btree-order", "4");
 
         assertEquals(Main.EXIT_OK, status);
         assertTrue(Files.exists(directory.resolve("main.db")));
