@@ -12,7 +12,7 @@ public sealed interface Statement {
     record Identifier(String name, SourcePosition position) {
     }
 
-    record ColumnDefinition(Identifier name, DataType type, boolean nullable) {
+    record ColumnDefinition(Identifier name, DataType type, boolean nullable, boolean primaryKey) {
     }
 
     record CreateTable(Identifier table, List<ColumnDefinition> columns, SourcePosition position)
@@ -24,6 +24,10 @@ public sealed interface Statement {
     }
 
     record DropTable(Identifier table, SourcePosition position) implements Statement {
+    }
+
+    record CreateIndex(Identifier name, Identifier table, Identifier column, SourcePosition position)
+            implements Statement {
     }
 
     record Insert(Identifier table, Optional<List<Identifier>> columns, List<List<Expression>> rows,
