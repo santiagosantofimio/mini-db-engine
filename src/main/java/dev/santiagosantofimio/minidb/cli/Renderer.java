@@ -5,6 +5,7 @@ import dev.santiagosantofimio.minidb.SourcePosition;
 import dev.santiagosantofimio.minidb.SyntaxException;
 import dev.santiagosantofimio.minidb.catalog.Table;
 import dev.santiagosantofimio.minidb.exec.StatementResult;
+import dev.santiagosantofimio.minidb.exec.StatementResult.IndexCreated;
 import dev.santiagosantofimio.minidb.exec.StatementResult.Rows;
 import dev.santiagosantofimio.minidb.exec.StatementResult.RowsInserted;
 import dev.santiagosantofimio.minidb.exec.StatementResult.TableCreated;
@@ -38,6 +39,8 @@ final class Renderer {
             }
             case TableCreated created -> done("Created table " + created.table(), nanos);
             case TableDropped dropped -> done("Dropped table " + dropped.table(), nanos);
+            case IndexCreated created -> done(
+                    "Created index " + created.index() + " on " + created.table() + " (" + created.column() + ")", nanos);
             case RowsInserted inserted -> done(
                     "Inserted " + count(inserted.count(), "row") + " into " + inserted.table(), nanos);
         };

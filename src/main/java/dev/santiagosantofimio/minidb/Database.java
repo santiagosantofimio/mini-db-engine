@@ -1,6 +1,7 @@
 package dev.santiagosantofimio.minidb;
 
 import dev.santiagosantofimio.minidb.catalog.Catalog;
+import dev.santiagosantofimio.minidb.catalog.Index;
 import dev.santiagosantofimio.minidb.catalog.Table;
 import dev.santiagosantofimio.minidb.exec.Executor;
 import dev.santiagosantofimio.minidb.exec.StatementResult;
@@ -90,6 +91,22 @@ public final class Database implements AutoCloseable {
 
     public Optional<Table> table(String name) {
         return catalog.table(name);
+    }
+
+    public List<Index> indexes() {
+        return catalog.indexes();
+    }
+
+    public Optional<Index> index(String name) {
+        return catalog.index(name);
+    }
+
+    public BPlusTree tree(Index index) {
+        return catalog.treeOf(index);
+    }
+
+    public int btreeOrder() {
+        return catalog.btreeOrder();
     }
 
     public BufferPoolStats stats() {
