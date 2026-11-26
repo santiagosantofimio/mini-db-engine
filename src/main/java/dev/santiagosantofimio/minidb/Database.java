@@ -4,6 +4,7 @@ import dev.santiagosantofimio.minidb.catalog.Catalog;
 import dev.santiagosantofimio.minidb.catalog.Table;
 import dev.santiagosantofimio.minidb.exec.Executor;
 import dev.santiagosantofimio.minidb.exec.StatementResult;
+import dev.santiagosantofimio.minidb.index.BPlusTree;
 import dev.santiagosantofimio.minidb.sql.Parser;
 import dev.santiagosantofimio.minidb.sql.Statement;
 import dev.santiagosantofimio.minidb.storage.BufferPoolStats;
@@ -17,6 +18,7 @@ public final class Database implements AutoCloseable {
 
     public static final int DEFAULT_BUFFER_PAGES = 1024;
     public static final int MIN_BUFFER_PAGES = 16;
+    public static final int DEFAULT_BTREE_ORDER = BPlusTree.MAX_ORDER;
 
     private final Storage storage;
     private final Catalog catalog;
@@ -35,13 +37,21 @@ public final class Database implements AutoCloseable {
     }
 
     public static Database open(Path path, int bufferPages) {
+        return open(path, bufferPages, DEFAULT_BTREE_ORDER);
+    }
+
+    public static Database open(Path path, int bufferPages, int btreeOrder) {
+        if (btreeOrder < BPlusTree.MIN_ORDER || btreeOrder > BPlusTree.MAX_ORDER) {
+            throw new IllegalArgumentException("the B+ tree order must be between " + BPlusTree.MIN_ORDER + " and "
+                    + BPlusTree.MAX_ORDER + ", got " + btreeOrder);
+        }
         if (bufferPages < MIN_BUFFER_PAGES) {
             throw new IllegalArgumentException(
                     "the buffer pool needs at least " + MIN_BUFFER_PAGES + " pages, got " + bufferPages);
         }
         Storage storage = Storage.open(path, bufferPages);
         try {
-            Catalog catalog = Catalog.open(storage);
+            Catalog catalog = Catalog.open(storage, btreeOrder);
             storage.flush();
             return new Database(storage, catalog, bufferPages);
         } catch (RuntimeException e) {
