@@ -103,3 +103,35 @@ After each statement the dirty pages are written to the file, followed by an `fs
 ### The REPL has no line editor
 
 Line editing and history would need a library such as JLine, which breaks the zero-dependency rule. The README suggests `rlwrap` instead. Colors appear only on a terminal and respect `NO_COLOR`, borders fall back to ASCII when the output is not UTF-8, errors go to standard error, and a non-interactive run exits with status 1 if any statement failed.
+
+## Phase 3: B+ tree
+
+### Every index orders entries by (key, RID)
+
+Leaves store `(key, RID)` pairs, and both leaves and separators compare by key first and RID second. Duplicate keys in a secondary index therefore still have a total order: inserting and deleting one exact entry follows a single path, and the entries for one key come out in RID order. The primary key uses the same structure and checks for an existing key before inserting.
+
+Rejected: storing a list of RIDs per key. It saves space for very repetitive keys, but a long list can outgrow its page and needs overflow handling that the composite key avoids.
+
+### The root page never moves
+
+When the root splits, its contents are copied to a freshly allocated page and the root page is rewritten as the new internal node above both halves. The catalog records each index's root page once, at creation, and never has to change it.
+
+Rejected: allocating a new root and updating the catalog record on every root split. It is the textbook version, but it ties every index insert to a possible catalog write.
+
+### Nodes are decoded, changed and written back, with no pins held while descending
+
+Each step reads a page into a small node object, releases the pin, and writes the node back only if it changed. An insert remembers the nodes on its path in memory rather than keeping their pages pinned, so it holds at most three pages at once however tall the tree is. That matters because tests run trees of order 3, about ten levels deep, inside a 16-page buffer pool.
+
+Rejected: holding every page on the path pinned until the insert finishes. It avoids re-reading a page, but a tall tree would exhaust a small buffer pool.
+
+### Deletes only remove the leaf entry
+
+A delete takes the entry out of its leaf and never merges or redistributes nodes, so leaves can end up sparse or empty. Every search and range scan still works, because separators remain valid bounds and scans follow the leaf chain past empty leaves. Rebalancing on delete is listed as an extra.
+
+### The order is a runtime option
+
+By default a node holds as many entries as fit in a page: 408 in a leaf, 292 in an internal node. The order can be lowered as far as 3 when opening a database (`--btree-order`). Tests and demos use that to see splits after a handful of rows. The order is not stored in the file, since it only decides when a node splits, so a tree built with one order stays valid under another.
+
+### Tested against a TreeMap
+
+A randomized test with fixed seeds runs 40,000 inserts and deletes for each of four orders, with keys drawn from a small range to force duplicates. After each batch it compares range queries with a `TreeMap` and runs an integrity check: every node sorted, every entry within its parent's bounds, every leaf at the same depth, and the leaf chain visiting the leaves in key order.

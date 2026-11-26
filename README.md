@@ -13,7 +13,7 @@ Built in phases, each one merged with its tests green.
 - [x] **0. Project setup:** Maven build, CI, package layout, error hierarchy
 - [x] **1. Storage:** pager, LRU buffer pool, slotted pages, heap files, tuple serialization
 - [x] **2. First queries:** catalog, lexer, parser, `CREATE TABLE`, `DROP TABLE`, `INSERT`, `SELECT ... WHERE`, REPL
-- [ ] **3. B+ tree:** splits, point and range lookups, `PRIMARY KEY`, `CREATE INDEX`
+- [x] **3. B+ tree:** splits, point and range lookups, `PRIMARY KEY`, `CREATE INDEX`, `.btree`
 - [ ] **4. Planner and executor:** rule-based optimizer, joins, `ORDER BY`, `LIMIT`, `UPDATE`, `DELETE`, `EXPLAIN`
 - [ ] **5. Transactions and recovery:** WAL, `BEGIN` / `COMMIT` / `ROLLBACK`, checkpoints
 - [ ] **6. Aggregation:** `GROUP BY`, `HAVING`, `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`
@@ -48,13 +48,15 @@ Error at line 1, column 8: unknown column nme
          ^
 ```
 
-Statements end with `;` and may span several lines. `--buffer-pages N` sets the buffer pool size (1024 pages by default, at least 16). The REPL has no line editing of its own, since that would need a dependency; run it under `rlwrap` for history and arrow keys.
+Statements end with `;` and may span several lines. `--buffer-pages N` sets the buffer pool size (1024 pages by default, at least 16), and `--btree-order N` caps the keys per B+ tree node (between 3 and 408, the most that fit in a page by default) so small trees show their splits. The REPL has no line editing of its own, since that would need a dependency; run it under `rlwrap` for history and arrow keys.
 
 | Command | What it does |
 |---|---|
 | `.help` | List the commands |
 | `.tables` | List the tables |
-| `.schema [table]` | Show `CREATE TABLE` statements |
+| `.schema [table]` | Show `CREATE TABLE` and `CREATE INDEX` statements |
+| `.indexes [table]` | List the indexes |
+| `.btree <index>` | Print a B+ tree level by level |
 | `.stats` | Show buffer pool hits, misses and evictions |
 | `.read <file>` | Run the SQL in a file, stopping at the first error |
 | `.exit` | Leave the REPL |
@@ -68,14 +70,16 @@ java -jar target/minidb.jar demo.db < examples/university.sql
 ## Supported SQL
 
 ```sql
-CREATE TABLE students (id INT NOT NULL, name VARCHAR(40) NOT NULL, gpa DOUBLE, active BOOLEAN);
+CREATE TABLE students (id INT PRIMARY KEY, name VARCHAR(40) NOT NULL, age INT, gpa DOUBLE);
+CREATE INDEX students_age ON students (age);
 INSERT INTO students (id, name) VALUES (1, 'Ana'), (2, 'Bruno');
 SELECT s.name, s.gpa * 10 AS score FROM students s WHERE s.gpa BETWEEN 3.0 AND 4.0;
 DROP TABLE students;
 ```
 
 - **Types:** `INT` (32-bit), `DOUBLE`, `BOOLEAN` and `VARCHAR(n)` with `n` up to 4000 characters.
-- **Constraints:** `NOT NULL` and the `VARCHAR` length. An `INSERT` checks every row before writing any of them.
+- **Constraints:** `PRIMARY KEY` on one `INT` column (unique, implies `NOT NULL`, backed by an index named `<table>_pkey`), `NOT NULL` and the `VARCHAR` length. An `INSERT` checks every row, including duplicate keys, before writing any of them.
+- **Indexes:** `CREATE INDEX name ON table (column)` on `INT` columns. Indexes are filled from the existing rows and kept up to date by every `INSERT`; `NULL` values are not indexed. The query planner starts using them in phase 4.
 - **Expressions:** literals, columns (`t.column`), `+ - * /`, `= <> != < <= > >=`, `BETWEEN`, `IS [NOT] NULL`, `AND`, `OR`, `NOT` and parentheses. `INT / INT` truncates; overflow and division by zero are errors.
 - **`NULL`** follows SQL's three-valued logic: comparing with `NULL` gives `NULL`, and `WHERE` keeps only rows whose condition is `TRUE`.
 - **Names** are case-insensitive. Keywords cannot be used as names, and select-list aliases need `AS`.
@@ -151,9 +155,25 @@ A tuple is a null bitmap (bit `i % 8` of byte `i / 8` is set when column `i` is 
 
 For example, `(7, 'Ana', NULL, TRUE)` with columns `INT, VARCHAR, DOUBLE, BOOLEAN` encodes as `04 00000007 0003 416E61 01`. A tuple must fit in one page, which leaves room for 4083 bytes.
 
+### B+ tree nodes
+
+Each index is a B+ tree with one node per page. Entries are `(key, RID)` pairs ordered by key and then by RID, so duplicate keys in secondary indexes still have a total order.
+
+| Node | Header (7 bytes) | Body | Capacity |
+|---|---|---|---|
+| `BTREE_LEAF` | type, entry count, next leaf | entries of key (4) + page id (4) + slot (2) | 408 entries |
+| `BTREE_INTERNAL` | type, key count, first child | separators of 10 bytes, each followed by a 4-byte child | 292 keys |
+
+The leaf links let a range scan walk from one leaf to the next without going back up the tree. When the root splits, its contents move to a new page and the root page becomes the new parent, so an index's root page never changes.
+
 ### Catalog
 
-The header's catalog root points to a chain of `CATALOG` slotted pages holding one record per table: a kind byte (`1` for a table), the table name, the table's first heap page, a column count, and for each column its name, a type code (`1` `INT`, `2` `DOUBLE`, `3` `BOOLEAN`, `4` `VARCHAR` followed by its 2-byte length) and a nullable flag. Strings are a 2-byte length followed by UTF-8. The catalog is read into memory when the database opens and written through on every `CREATE TABLE` and `DROP TABLE`.
+The header's catalog root points to a chain of `CATALOG` slotted pages holding one record per table or index. Strings are a 2-byte length followed by UTF-8.
+
+- **Table** (kind `1`): name, first heap page, column count, and for each column its name, a type code (`1` `INT`, `2` `DOUBLE`, `3` `BOOLEAN`, `4` `VARCHAR` followed by its 2-byte length) and a nullable flag.
+- **Index** (kind `2`): name, table name, column position, root page and a primary key flag.
+
+The catalog is read into memory when the database opens and written through on every `CREATE` and `DROP`.
 
 ## Scope
 
