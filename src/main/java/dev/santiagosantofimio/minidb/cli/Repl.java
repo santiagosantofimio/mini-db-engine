@@ -2,8 +2,10 @@ package dev.santiagosantofimio.minidb.cli;
 
 import dev.santiagosantofimio.minidb.Database;
 import dev.santiagosantofimio.minidb.MiniDbException;
+import dev.santiagosantofimio.minidb.catalog.Index;
 import dev.santiagosantofimio.minidb.catalog.Table;
 import dev.santiagosantofimio.minidb.exec.StatementResult;
+import dev.santiagosantofimio.minidb.index.BPlusTree;
 import dev.santiagosantofimio.minidb.sql.Lexer;
 import dev.santiagosantofimio.minidb.sql.Statement;
 import dev.santiagosantofimio.minidb.storage.BufferPoolStats;
@@ -30,7 +32,9 @@ final class Repl {
     private static final List<String[]> COMMANDS = List.of(
             new String[] {".help", "Show this list"},
             new String[] {".tables", "List the tables"},
-            new String[] {".schema [table]", "Show CREATE TABLE statements"},
+            new String[] {".schema [table]", "Show CREATE TABLE and CREATE INDEX statements"},
+            new String[] {".indexes [table]", "List the indexes"},
+            new String[] {".btree <index>", "Print a B+ tree level by level"},
             new String[] {".stats", "Show buffer pool statistics"},
             new String[] {".read <file>", "Run the SQL in a file"},
             new String[] {".exit", "Leave minidb"});
@@ -153,6 +157,12 @@ final class Repl {
                 return schema(argument);
             }
             case ".stats" -> stats();
+            case ".indexes" -> {
+                return indexes(argument);
+            }
+            case ".btree" -> {
+                return btree(argument);
+            }
             case ".read" -> {
                 return read(argument);
             }
@@ -180,15 +190,50 @@ final class Repl {
 
     private Outcome schema(String name) {
         if (name.isEmpty()) {
-            database.tables().forEach(table -> print(renderer.schema(table)));
+            database.tables().forEach(table -> print(renderer.schema(table, indexesOf(table.name()))));
             return Outcome.FINISHED;
         }
         Optional<Table> table = database.table(name.toLowerCase(Locale.ROOT));
         if (table.isEmpty()) {
             return fail("no such table: " + name);
         }
-        print(renderer.schema(table.get()));
+        print(renderer.schema(table.get(), indexesOf(table.get().name())));
         return Outcome.FINISHED;
+    }
+
+    private List<Index> indexesOf(String table) {
+        return database.indexes().stream().filter(index -> index.table().equals(table)).toList();
+    }
+
+    private Outcome indexes(String tableName) {
+        List<Index> indexes = database.indexes();
+        if (!tableName.isEmpty()) {
+            String table = tableName.toLowerCase(Locale.ROOT);
+            if (database.table(table).isEmpty()) {
+                return fail("no such table: " + tableName);
+            }
+            indexes = indexesOf(table);
+        }
+        print(renderer.indexes(indexes, indexes.stream().map(this::columnName).toList()));
+        return Outcome.FINISHED;
+    }
+
+    private Outcome btree(String name) {
+        if (name.isEmpty()) {
+            return fail(".btree needs an index name; .indexes lists them");
+        }
+        Optional<Index> index = database.index(name.toLowerCase(Locale.ROOT));
+        if (index.isEmpty()) {
+            return fail("no such index: " + name);
+        }
+        BPlusTree tree = database.tree(index.get());
+        print(renderer.btree(index.get(), columnName(index.get()), tree.checkIntegrity(), database.btreeOrder(),
+                tree.levels()));
+        return Outcome.FINISHED;
+    }
+
+    private String columnName(Index index) {
+        return database.table(index.table()).orElseThrow().schema().column(index.column()).name();
     }
 
     private void stats() {

@@ -2,6 +2,7 @@ package dev.santiagosantofimio.minidb.cli;
 
 import dev.santiagosantofimio.minidb.Database;
 import dev.santiagosantofimio.minidb.MiniDbException;
+import dev.santiagosantofimio.minidb.index.BPlusTree;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -15,7 +16,7 @@ public final class Main {
     static final int EXIT_FAILURE = 1;
     static final int EXIT_USAGE = 64;
     static final String USAGE = """
-            Usage: java -jar minidb.jar <database-file> [--buffer-pages N]
+            Usage: java -jar minidb.jar <database-file> [--buffer-pages N] [--btree-order N]
                    java -jar minidb.jar --help | --version""";
 
     private Main() {
@@ -41,7 +42,7 @@ public final class Main {
             err.println(e.getMessage().isEmpty() ? USAGE : "minidb: " + e.getMessage() + "\n" + USAGE);
             return EXIT_USAGE;
         }
-        try (Database database = Database.open(options.database(), options.bufferPages())) {
+        try (Database database = Database.open(options.database(), options.bufferPages(), options.btreeOrder())) {
             BufferedReader input = new BufferedReader(new InputStreamReader(in, Charset.defaultCharset()));
             Repl repl = new Repl(database, out, err, terminal);
             return repl.run(input, options.database().getFileName().toString(), version());
@@ -56,18 +57,24 @@ public final class Main {
         return version == null ? "development build" : version;
     }
 
-    private record Options(Path database, int bufferPages) {
+    private record Options(Path database, int bufferPages, int btreeOrder) {
 
         static Options parse(String[] args) {
             Path database = null;
             int bufferPages = Database.DEFAULT_BUFFER_PAGES;
+            int btreeOrder = Database.DEFAULT_BTREE_ORDER;
             for (int i = 0; i < args.length; i++) {
                 String arg = args[i];
-                if (arg.equals("--buffer-pages")) {
+                if (arg.equals("--buffer-pages") || arg.equals("--btree-order")) {
                     if (i + 1 == args.length) {
-                        throw new IllegalArgumentException("--buffer-pages needs a number");
+                        throw new IllegalArgumentException(arg + " needs a number");
                     }
-                    bufferPages = bufferPages(args[++i]);
+                    int value = number(arg, args[++i]);
+                    if (arg.equals("--buffer-pages")) {
+                        bufferPages = within(arg, value, Database.MIN_BUFFER_PAGES, Integer.MAX_VALUE);
+                    } else {
+                        btreeOrder = within(arg, value, BPlusTree.MIN_ORDER, BPlusTree.MAX_ORDER);
+                    }
                 } else if (arg.startsWith("-")) {
                     throw new IllegalArgumentException("unknown option " + arg);
                 } else if (database == null) {
@@ -79,20 +86,25 @@ public final class Main {
             if (database == null) {
                 throw new IllegalArgumentException("");
             }
-            return new Options(database, bufferPages);
+            return new Options(database, bufferPages, btreeOrder);
         }
 
-        private static int bufferPages(String text) {
-            int pages;
+        private static int number(String option, String text) {
             try {
-                pages = Integer.parseInt(text);
+                return Integer.parseInt(text);
             } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("--buffer-pages needs a number, got " + text);
+                throw new IllegalArgumentException(option + " needs a number, got " + text);
             }
-            if (pages < Database.MIN_BUFFER_PAGES) {
-                throw new IllegalArgumentException("--buffer-pages must be at least " + Database.MIN_BUFFER_PAGES);
+        }
+
+        private static int within(String option, int value, int min, int max) {
+            if (value < min) {
+                throw new IllegalArgumentException(option + " must be at least " + min);
             }
-            return pages;
+            if (value > max) {
+                throw new IllegalArgumentException(option + " must be at most " + max);
+            }
+            return value;
         }
     }
 }
