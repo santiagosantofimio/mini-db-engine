@@ -1,12 +1,12 @@
 CREATE TABLE students (
-  id INT NOT NULL,
+  id INT PRIMARY KEY,
   name VARCHAR(40) NOT NULL,
   age INT,
   major VARCHAR(30)
 );
 
 CREATE TABLE courses (
-  id INT NOT NULL,
+  id INT PRIMARY KEY,
   title VARCHAR(60) NOT NULL,
   credits INT NOT NULL
 );
@@ -16,6 +16,8 @@ CREATE TABLE enrollments (
   course_id INT NOT NULL,
   grade DOUBLE
 );
+
+CREATE INDEX idx_enrollments_student ON enrollments (student_id);
 
 INSERT INTO students VALUES
   (1, 'Ana Torres', 21, 'Computer Science'),
