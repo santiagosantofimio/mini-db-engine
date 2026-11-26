@@ -11,16 +11,20 @@ import static dev.santiagosantofimio.minidb.sql.TokenType.DROP;
 import static dev.santiagosantofimio.minidb.sql.TokenType.END;
 import static dev.santiagosantofimio.minidb.sql.TokenType.FROM;
 import static dev.santiagosantofimio.minidb.sql.TokenType.IDENTIFIER;
+import static dev.santiagosantofimio.minidb.sql.TokenType.INDEX;
 import static dev.santiagosantofimio.minidb.sql.TokenType.INSERT;
 import static dev.santiagosantofimio.minidb.sql.TokenType.INTEGER;
 import static dev.santiagosantofimio.minidb.sql.TokenType.INTO;
 import static dev.santiagosantofimio.minidb.sql.TokenType.IS;
+import static dev.santiagosantofimio.minidb.sql.TokenType.KEY;
 import static dev.santiagosantofimio.minidb.sql.TokenType.LEFT_PAREN;
 import static dev.santiagosantofimio.minidb.sql.TokenType.MINUS;
 import static dev.santiagosantofimio.minidb.sql.TokenType.NOT;
 import static dev.santiagosantofimio.minidb.sql.TokenType.NULL;
+import static dev.santiagosantofimio.minidb.sql.TokenType.ON;
 import static dev.santiagosantofimio.minidb.sql.TokenType.OR;
 import static dev.santiagosantofimio.minidb.sql.TokenType.PLUS;
+import static dev.santiagosantofimio.minidb.sql.TokenType.PRIMARY;
 import static dev.santiagosantofimio.minidb.sql.TokenType.RIGHT_PAREN;
 import static dev.santiagosantofimio.minidb.sql.TokenType.SELECT;
 import static dev.santiagosantofimio.minidb.sql.TokenType.SEMICOLON;
@@ -43,6 +47,7 @@ import dev.santiagosantofimio.minidb.sql.Expression.Negate;
 import dev.santiagosantofimio.minidb.sql.Expression.Not;
 import dev.santiagosantofimio.minidb.sql.Statement.AllColumns;
 import dev.santiagosantofimio.minidb.sql.Statement.ColumnDefinition;
+import dev.santiagosantofimio.minidb.sql.Statement.CreateIndex;
 import dev.santiagosantofimio.minidb.sql.Statement.CreateTable;
 import dev.santiagosantofimio.minidb.sql.Statement.DropTable;
 import dev.santiagosantofimio.minidb.sql.Statement.Identifier;
@@ -94,10 +99,10 @@ public final class Parser {
         return switch (token.type()) {
             case SELECT -> select();
             case INSERT -> insert();
-            case CREATE -> createTable();
+            case CREATE -> peekNext().type() == INDEX ? createIndex() : createTable();
             case DROP -> dropTable();
-            default -> throw error(token,
-                    "expected SELECT, INSERT, CREATE TABLE or DROP TABLE but found " + token.describe());
+            default -> throw error(token, "expected SELECT, INSERT, CREATE TABLE, CREATE INDEX or DROP TABLE but found "
+                    + token.describe());
         };
     }
 
@@ -117,12 +122,31 @@ public final class Parser {
     private ColumnDefinition columnDefinition() {
         Identifier name = identifier("a column name");
         DataType type = dataType();
-        boolean nullable = true;
-        if (match(NOT)) {
-            expect(NULL);
-            nullable = false;
+        boolean notNull = false;
+        boolean primaryKey = false;
+        while (check(NOT) || check(PRIMARY)) {
+            if (match(NOT)) {
+                expect(NULL);
+                notNull = true;
+            } else {
+                advance();
+                expect(KEY);
+                primaryKey = true;
+            }
         }
-        return new ColumnDefinition(name, type, nullable);
+        return new ColumnDefinition(name, type, !notNull && !primaryKey, primaryKey);
+    }
+
+    private Statement createIndex() {
+        Token create = expect(CREATE);
+        expect(INDEX);
+        Identifier name = identifier("an index name");
+        expect(ON);
+        Identifier table = identifier("a table name");
+        expect(LEFT_PAREN);
+        Identifier column = identifier("a column name");
+        expect(RIGHT_PAREN);
+        return new CreateIndex(name, table, column, create.position());
     }
 
     private DataType dataType() {

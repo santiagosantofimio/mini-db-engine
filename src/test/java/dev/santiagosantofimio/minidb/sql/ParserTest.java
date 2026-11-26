@@ -13,6 +13,7 @@ import dev.santiagosantofimio.minidb.record.Value;
 import dev.santiagosantofimio.minidb.sql.Expression.Binary;
 import dev.santiagosantofimio.minidb.sql.Expression.Literal;
 import dev.santiagosantofimio.minidb.sql.Statement.AllColumns;
+import dev.santiagosantofimio.minidb.sql.Statement.CreateIndex;
 import dev.santiagosantofimio.minidb.sql.Statement.CreateTable;
 import dev.santiagosantofimio.minidb.sql.Statement.DropTable;
 import dev.santiagosantofimio.minidb.sql.Statement.Insert;
@@ -51,6 +52,19 @@ class ParserTest {
         assertFalse(create.columns().get(0).nullable());
         assertEquals(DataType.varchar(40), create.columns().get(1).type());
         assertTrue(create.columns().get(1).nullable());
+    }
+
+    @Test
+    void parsesPrimaryKeysAndIndexes() {
+        CreateTable create = (CreateTable) single("CREATE TABLE t (id INT PRIMARY KEY, n INT NOT NULL, m INT)");
+        CreateIndex index = (CreateIndex) single("CREATE INDEX t_n ON t (n)");
+
+        assertTrue(create.columns().get(0).primaryKey());
+        assertFalse(create.columns().get(0).nullable());
+        assertFalse(create.columns().get(1).primaryKey());
+        assertFalse(create.columns().get(1).nullable());
+        assertTrue(create.columns().get(2).nullable());
+        assertEquals(List.of("t_n", "t", "n"), List.of(index.name().name(), index.table().name(), index.column().name()));
     }
 
     @Test
@@ -169,6 +183,9 @@ class ParserTest {
         "INSERT INTO t VALUES",
         "INSERT INTO t VALUES (1,)",
         "DROP students",
+        "CREATE INDEX ON t (x)",
+        "CREATE INDEX i ON t x",
+        "CREATE TABLE t (id INT PRIMARY)",
         "SELECT 2147483648 FROM t",
         "SELECT * FROM select"
     })

@@ -35,6 +35,10 @@ public enum TokenType {
     DOUBLE,
     BOOLEAN,
     VARCHAR,
+    PRIMARY,
+    KEY,
+    INDEX,
+    ON,
 
     COMMA("','", false),
     DOT("'.'", false),
