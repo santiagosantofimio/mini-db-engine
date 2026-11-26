@@ -24,6 +24,9 @@ public sealed interface StatementResult {
     record TableDropped(String table) implements StatementResult {
     }
 
+    record IndexCreated(String index, String table, String column) implements StatementResult {
+    }
+
     record RowsInserted(String table, int count) implements StatementResult {
     }
 }

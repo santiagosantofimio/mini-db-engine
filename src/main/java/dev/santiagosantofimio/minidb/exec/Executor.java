@@ -5,11 +5,14 @@ import dev.santiagosantofimio.minidb.ConstraintViolationException;
 import dev.santiagosantofimio.minidb.QueryException;
 import dev.santiagosantofimio.minidb.SourcePosition;
 import dev.santiagosantofimio.minidb.catalog.Catalog;
+import dev.santiagosantofimio.minidb.catalog.Index;
 import dev.santiagosantofimio.minidb.catalog.Table;
+import dev.santiagosantofimio.minidb.exec.StatementResult.IndexCreated;
 import dev.santiagosantofimio.minidb.exec.StatementResult.Rows;
 import dev.santiagosantofimio.minidb.exec.StatementResult.RowsInserted;
 import dev.santiagosantofimio.minidb.exec.StatementResult.TableCreated;
 import dev.santiagosantofimio.minidb.exec.StatementResult.TableDropped;
+import dev.santiagosantofimio.minidb.index.BPlusTree;
 import dev.santiagosantofimio.minidb.plan.Attribute;
 import dev.santiagosantofimio.minidb.plan.Expr;
 import dev.santiagosantofimio.minidb.plan.ExpressionBinder;
@@ -17,6 +20,7 @@ import dev.santiagosantofimio.minidb.plan.LogicalPlan;
 import dev.santiagosantofimio.minidb.plan.Planner;
 import dev.santiagosantofimio.minidb.plan.ValueType;
 import dev.santiagosantofimio.minidb.record.Column;
+import dev.santiagosantofimio.minidb.record.DataType;
 import dev.santiagosantofimio.minidb.record.DataType.VarcharType;
 import dev.santiagosantofimio.minidb.record.Schema;
 import dev.santiagosantofimio.minidb.record.Tuple;
@@ -27,12 +31,14 @@ import dev.santiagosantofimio.minidb.record.Value.StringValue;
 import dev.santiagosantofimio.minidb.sql.Expression;
 import dev.santiagosantofimio.minidb.sql.Statement;
 import dev.santiagosantofimio.minidb.sql.Statement.ColumnDefinition;
+import dev.santiagosantofimio.minidb.sql.Statement.CreateIndex;
 import dev.santiagosantofimio.minidb.sql.Statement.CreateTable;
 import dev.santiagosantofimio.minidb.sql.Statement.DropTable;
 import dev.santiagosantofimio.minidb.sql.Statement.Identifier;
 import dev.santiagosantofimio.minidb.sql.Statement.Insert;
 import dev.santiagosantofimio.minidb.sql.Statement.Select;
 import dev.santiagosantofimio.minidb.storage.HeapFile;
+import dev.santiagosantofimio.minidb.storage.Rid;
 import dev.santiagosantofimio.minidb.storage.SlottedPage;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -56,6 +62,7 @@ public final class Executor {
     public StatementResult execute(Statement statement) {
         return switch (statement) {
             case CreateTable create -> createTable(create);
+            case CreateIndex create -> createIndex(create);
             case DropTable drop -> dropTable(drop);
             case Insert insert -> insert(insert);
             case Select select -> select(select);
@@ -69,15 +76,52 @@ public final class Executor {
         }
         Set<String> seen = new HashSet<>();
         List<Column> columns = new ArrayList<>();
+        Optional<Identifier> primaryKey = Optional.empty();
         for (ColumnDefinition definition : create.columns()) {
-            if (!seen.add(definition.name().name())) {
-                throw new CatalogException(
-                        "column " + definition.name().name() + " is defined twice", definition.name().position());
+            Identifier column = definition.name();
+            if (!seen.add(column.name())) {
+                throw new CatalogException("column " + column.name() + " is defined twice", column.position());
             }
-            columns.add(new Column(definition.name().name(), definition.type(), definition.nullable()));
+            if (definition.primaryKey()) {
+                if (primaryKey.isPresent()) {
+                    throw new CatalogException("a table can have only one PRIMARY KEY column", column.position());
+                }
+                if (!DataType.INT.equals(definition.type())) {
+                    throw new CatalogException("PRIMARY KEY columns must be INT, but " + column.name() + " is "
+                            + definition.type(), column.position());
+                }
+                primaryKey = Optional.of(column);
+            }
+            columns.add(new Column(column.name(), definition.type(), definition.nullable()));
+        }
+        String primaryIndex = primaryIndexName(name.name());
+        if (primaryKey.isPresent() && catalog.index(primaryIndex).isPresent()) {
+            throw new CatalogException("index " + primaryIndex + " already exists", primaryKey.get().position());
         }
         catalog.createTable(name.name(), columns);
+        primaryKey.ifPresent(column -> catalog.createIndex(primaryIndex, name.name(), column.name(), true));
         return new TableCreated(name.name());
+    }
+
+    public static String primaryIndexName(String table) {
+        return table + "_pkey";
+    }
+
+    private StatementResult createIndex(CreateIndex create) {
+        Identifier name = create.name();
+        if (catalog.index(name.name()).isPresent()) {
+            throw new CatalogException("index " + name.name() + " already exists", name.position());
+        }
+        Table table = requireTable(create.table());
+        Identifier column = create.column();
+        int position = indexOf(table, column);
+        DataType type = table.schema().column(position).type();
+        if (!DataType.INT.equals(type)) {
+            throw new CatalogException(
+                    "only INT columns can be indexed, but " + column.name() + " is " + type, column.position());
+        }
+        catalog.createIndex(name.name(), table.name(), column.name(), false);
+        return new IndexCreated(name.name(), table.name(), column.name());
     }
 
     private StatementResult dropTable(DropTable drop) {
@@ -107,6 +151,7 @@ public final class Executor {
         Table table = requireTable(insert.table());
         Schema schema = table.schema();
         int[] targets = targetColumns(table, insert.columns());
+        List<Tuple> tuples = new ArrayList<>(insert.rows().size());
         List<byte[]> records = new ArrayList<>(insert.rows().size());
         for (List<Expression> row : insert.rows()) {
             Tuple tuple = buildTuple(table, targets, row, insert.table().position());
@@ -115,11 +160,47 @@ public final class Executor {
                 throw new ConstraintViolationException("a row of " + record.length + " bytes does not fit in a page;"
                         + " the limit is " + SlottedPage.MAX_RECORD_SIZE + " bytes", row.get(0).position());
             }
+            tuples.add(tuple);
             records.add(record);
         }
+        List<Index> indexes = catalog.indexesOf(table.name());
+        for (Index index : indexes) {
+            if (index.primary()) {
+                rejectDuplicateKeys(index, tuples, insert, targets);
+            }
+        }
         HeapFile heap = catalog.heapOf(table);
-        records.forEach(heap::insert);
+        for (int i = 0; i < records.size(); i++) {
+            Rid rid = heap.insert(records.get(i));
+            for (Index index : indexes) {
+                if (tuples.get(i).get(index.column()) instanceof IntValue key) {
+                    catalog.treeOf(index).insert(key.value(), rid);
+                }
+            }
+        }
         return new RowsInserted(table.name(), records.size());
+    }
+
+    private void rejectDuplicateKeys(Index index, List<Tuple> tuples, Insert insert, int[] targets) {
+        BPlusTree tree = catalog.treeOf(index);
+        Set<Integer> seen = new HashSet<>();
+        for (int i = 0; i < tuples.size(); i++) {
+            int key = ((IntValue) tuples.get(i).get(index.column())).value();
+            if (!seen.add(key) || tree.contains(key)) {
+                throw new ConstraintViolationException("duplicate key " + key + " in primary key " + index.name(),
+                        positionOf(insert.rows().get(i), targets, index.column(), insert.table().position()));
+            }
+        }
+    }
+
+    private static SourcePosition positionOf(
+            List<Expression> row, int[] targets, int column, SourcePosition fallback) {
+        for (int i = 0; i < targets.length; i++) {
+            if (targets[i] == column) {
+                return row.get(i).position();
+            }
+        }
+        return fallback;
     }
 
     private static int[] targetColumns(Table table, Optional<List<Identifier>> names) {

@@ -112,7 +112,7 @@ public final class Catalog {
         }
         Table table = table(tableName).orElseThrow(() -> new CatalogException("no such table: " + tableName));
         int column = columnIndex(table, columnName);
-        if (table.schema().column(column).type() != DataType.INT) {
+        if (!DataType.INT.equals(table.schema().column(column).type())) {
             throw new CatalogException("only INT columns can be indexed, but " + columnName + " is "
                     + table.schema().column(column).type());
         }
