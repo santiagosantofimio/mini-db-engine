@@ -21,6 +21,7 @@ import java.util.List;
 final class CatalogRecords {
 
     private static final byte TABLE_RECORD = 1;
+    private static final byte INDEX_RECORD = 2;
 
     private static final byte INT_TYPE = 1;
     private static final byte DOUBLE_TYPE = 2;
@@ -48,24 +49,45 @@ final class CatalogRecords {
         return bytes.toByteArray();
     }
 
-    static Table decode(byte[] record) {
+    static byte[] encode(Index index) {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream out = new DataOutputStream(bytes)) {
+            out.writeByte(INDEX_RECORD);
+            writeString(out, index.name());
+            writeString(out, index.table());
+            out.writeShort(index.column());
+            out.writeInt(index.rootPageId());
+            out.writeBoolean(index.primary());
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return bytes.toByteArray();
+    }
+
+    static Definition decode(byte[] record) {
         ByteBuffer in = ByteBuffer.wrap(record);
         try {
             byte kind = in.get();
-            if (kind != TABLE_RECORD) {
-                throw new StorageException("damaged catalog: unknown record kind " + kind);
-            }
-            String name = readString(in);
-            int firstPageId = in.getInt();
-            int columnCount = Short.toUnsignedInt(in.getShort());
-            List<Column> columns = new ArrayList<>(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                columns.add(new Column(readString(in), readType(in), in.get() != 0));
-            }
-            return new Table(name, new Schema(columns), firstPageId);
+            return switch (kind) {
+                case TABLE_RECORD -> decodeTable(in);
+                case INDEX_RECORD -> new Index(
+                        readString(in), readString(in), Short.toUnsignedInt(in.getShort()), in.getInt(), in.get() != 0);
+                default -> throw new StorageException("damaged catalog: unknown record kind " + kind);
+            };
         } catch (BufferUnderflowException e) {
-            throw new StorageException("damaged catalog: a table record ends too early", e);
+            throw new StorageException("damaged catalog: a record ends too early", e);
         }
+    }
+
+    private static Table decodeTable(ByteBuffer in) {
+        String name = readString(in);
+        int firstPageId = in.getInt();
+        int columnCount = Short.toUnsignedInt(in.getShort());
+        List<Column> columns = new ArrayList<>(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            columns.add(new Column(readString(in), readType(in), in.get() != 0));
+        }
+        return new Table(name, new Schema(columns), firstPageId);
     }
 
     private static void writeString(DataOutputStream out, String value) throws IOException {

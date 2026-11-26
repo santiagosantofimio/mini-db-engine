@@ -6,8 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.santiagosantofimio.minidb.CatalogException;
+import dev.santiagosantofimio.minidb.ConstraintViolationException;
 import dev.santiagosantofimio.minidb.record.Column;
 import dev.santiagosantofimio.minidb.record.DataType;
+import dev.santiagosantofimio.minidb.record.Tuple;
+import dev.santiagosantofimio.minidb.record.TupleSerializer;
+import dev.santiagosantofimio.minidb.record.Value;
 import dev.santiagosantofimio.minidb.storage.PageHandle;
 import dev.santiagosantofimio.minidb.storage.PageType;
 import dev.santiagosantofimio.minidb.storage.Storage;
@@ -18,6 +22,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class CatalogTest {
+
+    private static final int ORDER = 4;
 
     private static final List<Column> STUDENT_COLUMNS = List.of(
             new Column("id", DataType.INT, false),
@@ -36,11 +42,11 @@ class CatalogTest {
     void tablesSurviveReopening() {
         Table created;
         try (Storage storage = open()) {
-            created = Catalog.open(storage).createTable("students", STUDENT_COLUMNS);
+            created = Catalog.open(storage, ORDER).createTable("students", STUDENT_COLUMNS);
         }
 
         try (Storage storage = open()) {
-            Catalog catalog = Catalog.open(storage);
+            Catalog catalog = Catalog.open(storage, ORDER);
 
             assertEquals(created, catalog.table("students").orElseThrow());
             assertEquals(STUDENT_COLUMNS, catalog.table("students").orElseThrow().schema().columns());
@@ -50,7 +56,7 @@ class CatalogTest {
     @Test
     void catalogLivesInCatalogPagesReachableFromTheHeader() {
         try (Storage storage = open()) {
-            Catalog.open(storage).createTable("students", STUDENT_COLUMNS);
+            Catalog.open(storage, ORDER).createTable("students", STUDENT_COLUMNS);
 
             assertNotEquals(Storage.NO_PAGE, storage.catalogRoot());
             try (PageHandle root = storage.fetch(storage.catalogRoot())) {
@@ -62,7 +68,7 @@ class CatalogTest {
     @Test
     void tablesAreListedByName() {
         try (Storage storage = open()) {
-            Catalog catalog = Catalog.open(storage);
+            Catalog catalog = Catalog.open(storage, ORDER);
             catalog.createTable("students", STUDENT_COLUMNS);
             catalog.createTable("courses", STUDENT_COLUMNS);
             catalog.createTable("enrollments", STUDENT_COLUMNS);
@@ -76,7 +82,7 @@ class CatalogTest {
     @Test
     void rejectsDuplicateTablesAndColumns() {
         try (Storage storage = open()) {
-            Catalog catalog = Catalog.open(storage);
+            Catalog catalog = Catalog.open(storage, ORDER);
             catalog.createTable("students", STUDENT_COLUMNS);
 
             assertThrows(CatalogException.class, () -> catalog.createTable("students", STUDENT_COLUMNS));
@@ -91,7 +97,7 @@ class CatalogTest {
     @Test
     void droppingATableForgetsItAndFreesItsPages() {
         try (Storage storage = open()) {
-            Catalog catalog = Catalog.open(storage);
+            Catalog catalog = Catalog.open(storage, ORDER);
             Table students = catalog.createTable("students", STUDENT_COLUMNS);
 
             catalog.dropTable("students");
@@ -104,7 +110,7 @@ class CatalogTest {
         }
 
         try (Storage storage = open()) {
-            assertTrue(Catalog.open(storage).tables().isEmpty());
+            assertTrue(Catalog.open(storage, ORDER).tables().isEmpty());
         }
     }
 
@@ -116,7 +122,7 @@ class CatalogTest {
         }
 
         try (Storage storage = open()) {
-            Catalog catalog = Catalog.open(storage);
+            Catalog catalog = Catalog.open(storage, ORDER);
             int pages = storage.pageCount();
 
             assertThrows(CatalogException.class, () -> catalog.createTable("wide", columns));
@@ -127,15 +133,109 @@ class CatalogTest {
     @Test
     void manyTablesSpillOntoMoreCatalogPages() {
         try (Storage storage = open()) {
-            Catalog catalog = Catalog.open(storage);
+            Catalog catalog = Catalog.open(storage, ORDER);
             for (int i = 0; i < 150; i++) {
                 catalog.createTable("table_" + i, STUDENT_COLUMNS);
             }
         }
 
         try (Storage storage = open()) {
-            assertEquals(150, Catalog.open(storage).tables().size());
+            assertEquals(150, Catalog.open(storage, ORDER).tables().size());
             assertEquals(0, storage.pinnedPageCount());
+        }
+    }
+
+    @Test
+    void indexesAreBuiltFromExistingRowsAndSurviveReopening() {
+        try (Storage storage = open()) {
+            Catalog catalog = Catalog.open(storage, ORDER);
+            Table students = catalog.createTable("students", STUDENT_COLUMNS);
+            insertIds(catalog, students, 50);
+
+            Index index = catalog.createIndex("students_by_id", "students", "id", false);
+
+            assertEquals(1, catalog.treeOf(index).lookup(7).size());
+        }
+
+        try (Storage storage = open()) {
+            Catalog catalog = Catalog.open(storage, ORDER);
+            Index index = catalog.index("students_by_id").orElseThrow();
+
+            assertEquals(List.of(index), catalog.indexesOf("students"));
+            assertEquals(0, index.column());
+            assertEquals(50, catalog.treeOf(index).checkIntegrity().entries());
+        }
+    }
+
+    @Test
+    void onlyIntColumnsCanBeIndexed() {
+        try (Storage storage = open()) {
+            Catalog catalog = Catalog.open(storage, ORDER);
+            catalog.createTable("students", STUDENT_COLUMNS);
+
+            assertThrows(CatalogException.class, () -> catalog.createIndex("by_name", "students", "name", false));
+            assertThrows(CatalogException.class, () -> catalog.createIndex("by_nope", "students", "nope", false));
+            assertThrows(CatalogException.class, () -> catalog.createIndex("by_id", "ghosts", "id", false));
+        }
+    }
+
+    @Test
+    void uniqueIndexOverDuplicatesFailsWithoutLeakingPages() {
+        try (Storage storage = open()) {
+            Catalog catalog = Catalog.open(storage, ORDER);
+            Table students = catalog.createTable("students", STUDENT_COLUMNS);
+            insertIds(catalog, students, 20);
+            insertIds(catalog, students, 1);
+            int pages = storage.pageCount();
+
+            assertThrows(
+                    ConstraintViolationException.class,
+                    () -> catalog.createIndex("students_pkey", "students", "id", true));
+
+            assertTrue(catalog.indexes().isEmpty());
+            Index retry = catalog.createIndex("students_by_id", "students", "id", false);
+            assertEquals(21, catalog.treeOf(retry).checkIntegrity().entries());
+            assertTrue(storage.pageCount() <= pages + catalog.treeOf(retry).checkIntegrity().pages());
+        }
+    }
+
+    @Test
+    void aTableHasAtMostOnePrimaryKeyAndIndexNamesAreUnique() {
+        try (Storage storage = open()) {
+            Catalog catalog = Catalog.open(storage, ORDER);
+            catalog.createTable("students", STUDENT_COLUMNS);
+            catalog.createIndex("students_pkey", "students", "id", true);
+
+            assertThrows(CatalogException.class, () -> catalog.createIndex("other_pkey", "students", "id", true));
+            assertThrows(CatalogException.class, () -> catalog.createIndex("students_pkey", "students", "id", false));
+        }
+    }
+
+    @Test
+    void droppingATableDropsItsIndexes() {
+        try (Storage storage = open()) {
+            Catalog catalog = Catalog.open(storage, ORDER);
+            Table students = catalog.createTable("students", STUDENT_COLUMNS);
+            insertIds(catalog, students, 30);
+            Index index = catalog.createIndex("students_pkey", "students", "id", true);
+
+            catalog.dropTable("students");
+
+            assertTrue(catalog.indexes().isEmpty());
+            try (PageHandle root = storage.fetch(index.rootPageId())) {
+                assertEquals(PageType.FREE, PageType.readFrom(root));
+            }
+        }
+
+        try (Storage storage = open()) {
+            assertTrue(Catalog.open(storage, ORDER).indexes().isEmpty());
+        }
+    }
+
+    private static void insertIds(Catalog catalog, Table table, int count) {
+        for (int id = 0; id < count; id++) {
+            Tuple row = Tuple.of(Value.of(id), Value.of("student " + id), Value.NULL, Value.TRUE);
+            catalog.heapOf(table).insert(TupleSerializer.serialize(table.schema(), row));
         }
     }
 }
